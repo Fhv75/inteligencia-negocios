@@ -8,7 +8,7 @@ PALETA = "tab10"
 TAMAÑO_VENTANA = "400x300"
 
 def configurar_ventana():
-    ventana = tk.Tk()
+    ventana = tk.Tk()   
     ventana.title("Aplicación Básica GUI")
     ventana.geometry(TAMAÑO_VENTANA)
     return ventana

@@ -12,15 +12,6 @@ ESTILO_ANOTACIONES = dict(boxstyle="round,pad=0.3", fc="beige", ec="black", lw=1
 PALETA = "tab10"
 TAMAÑO_VENTANA = "400x300"
 
-def crear_grafico_barras(data, ax):
-    sns.barplot(data=data, x="Año", y="Temperatura", hue="Ciudad", ax=ax, palette=PALETA)
-    ax.set_title("Promedios de temperatura por año", fontsize=14, fontweight='bold')
-    ax.set_ylabel("Temperatura", fontsize=12)
-    ax.set_xlabel("Año", fontsize=12)
-    plt.xticks(rotation=30)
-    ax.legend(title="Ciudad", bbox_to_anchor=(1, 1), loc='upper left')
-    plt.tight_layout()
-
 def agregar_anotaciones(ax, fig):
     anotaciones = []
     for p in ax.patches:
@@ -50,7 +41,6 @@ def mostrar_canvas(fig, ventana):
     canvas.draw()
     canvas.get_tk_widget().pack()
 
-
 def proyeccion_temperaturas(ventana, df, año, ciudad, modelo):
     # Filtrar los datos por la ciudad
     df_city = df[df['Ciudad'] == ciudad]
@@ -60,7 +50,7 @@ def proyeccion_temperaturas(ventana, df, año, ciudad, modelo):
     
     # Reindexar el DataFrame para tener un índice de fechas con el formato YYYY-MM
     monthly_temp.index = pd.to_datetime(monthly_temp.index.map(lambda x: f"{x[0]}-{x[1]}"))
-    monthly_temp.index.freq = 'M'  # Establecer la frecuencia de la serie temporal
+    monthly_temp = monthly_temp.asfreq('MS')  # Establecer frecuencia mensual (MS = Start of Month)
 
     forecast = None
     forecast_months = (año - monthly_temp.index[-1].year) * 12
@@ -81,7 +71,7 @@ def proyeccion_temperaturas(ventana, df, año, ciudad, modelo):
         nueva_ventana = crear_ventana("Proyección de temperaturas", ventana)
         
         # Crear la figura y el canvas para mostrar el gráfico
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(10, 6))
         
         # Dibujar las líneas de datos históricos y proyecciones
         line_hist, = ax.plot(monthly_temp.index, monthly_temp, label='Datos Históricos', color='orange')
@@ -100,18 +90,78 @@ def proyeccion_temperaturas(ventana, df, año, ciudad, modelo):
         canvas.draw()
         canvas.get_tk_widget().pack()
 
-        # Asegurarse de que 'Fecha' en forecast_df es de tipo datetime
+        # Crear la anotación para mostrar en el hover
+        annot = ax.annotate("", xy=(0, 0), xytext=(15, 15), textcoords="offset points",
+                            bbox=dict(boxstyle="round", fc="w"),
+                            arrowprops=dict(arrowstyle="->"))
+        annot.set_visible(False)
+
+        # Obtener los datos de las líneas
+        x_data_hist = line_hist.get_xdata()
+        y_data_hist = line_hist.get_ydata()
+
+        x_data_forecast = line_forecast.get_xdata()
+        y_data_forecast = line_forecast.get_ydata()
+
+        # Función para actualizar la anotación
+        def update_annot(ind, line_type):
+            index = ind["ind"][0]
+            if line_type == "hist":
+                x_value = x_data_hist[index]
+                y_value = y_data_hist[index]
+                label = "Histórico"
+            else:
+                x_value = x_data_forecast[index]
+                y_value = y_data_forecast[index]
+                label = "Proyección"
+
+            # Convertir numpy.datetime64 a datetime de Python y formatear la fecha
+            x_value = pd.to_datetime(x_value).to_pydatetime()
+            annot.xy = (x_value, y_value)
+            text = f"{label}\nFecha: {x_value.strftime('%Y-%m')}\nTemp: {y_value:.2f} °C"
+            annot.set_text(text)
+            annot.get_bbox_patch().set_alpha(0.8)
+
+        # Evento para manejar el movimiento del ratón
+        def hover(event):
+            vis = annot.get_visible()
+            if event.inaxes == ax:
+                # Verificar si el ratón está cerca de algún punto de la línea histórica
+                cont_hist, ind_hist = line_hist.contains(event)
+                if cont_hist:
+                    update_annot(ind_hist, "hist")
+                    annot.set_visible(True)
+                    fig.canvas.draw_idle()
+                else:
+                    # Verificar si el ratón está cerca de algún punto de la línea de proyección
+                    cont_forecast, ind_forecast = line_forecast.contains(event)
+                    if cont_forecast:
+                        update_annot(ind_forecast, "forecast")
+                        annot.set_visible(True)
+                        fig.canvas.draw_idle()
+                    elif vis:
+                        annot.set_visible(False)
+                        fig.canvas.draw_idle()
+
+        # Conectar el evento de movimiento del ratón al gráfico
+        fig.canvas.mpl_connect("motion_notify_event", hover)
+
+        # Calcular los promedios anuales de los años proyectados
         forecast_df = forecast.reset_index()
         forecast_df.columns = ['Fecha', 'Temperatura']
-        forecast_df['Fecha'] = pd.to_datetime(forecast_df['Fecha'])
-        
-        # Calcular los promedios anuales de los años proyectados
         forecast_df['Año'] = forecast_df['Fecha'].dt.year
         promedios_anuales = forecast_df.groupby('Año')['Temperatura'].mean()
 
+        # Calcular promedios anuales de los años historicos
+        promedios_anuales_hist = monthly_temp.reset_index()
+        promedios_anuales_hist.columns = ['Fecha', 'Temperatura']
+        promedios_anuales_hist['Año'] = promedios_anuales_hist['Fecha'].dt.year
+        promedios_anuales_hist = promedios_anuales_hist.groupby('Año')['Temperatura'].mean()
+
+
         # Calcular métricas de error (MAE y RMSE)
         if len(monthly_temp) >= forecast_months:  # Para asegurarnos de tener datos suficientes para la comparación
-            comparacion_historica = monthly_temp[-forecast_months:]
+            comparacion_historica = monthly_temp[:forecast_months]
             comparacion_forecast = forecast[:len(comparacion_historica)]
 
             mae = mean_absolute_error(comparacion_historica, comparacion_forecast)
@@ -119,25 +169,20 @@ def proyeccion_temperaturas(ventana, df, año, ciudad, modelo):
         else:
             mae = rmse = None
 
-        # Crear un frame principal para contener los resultados
+        # Crear un frame para organizar la información en dos columnas con una distribución correcta
         frame_resultados = tk.Frame(nueva_ventana)
         frame_resultados.pack(pady=10, padx=10, fill='x')
 
-        # Crear un frame para los promedios (columna izquierda)
-        frame_promedios = tk.Frame(frame_resultados)
-        frame_promedios.pack(side="left", anchor="nw", expand=True)
-
         # Añadir los promedios anuales a la primera columna (alineados a la izquierda)
-        promedios_texto = "Promedios Anuales de las Proyecciones:\n"
+        promedios_texto = "Promedios Anuales:\n"
+        for año, promedio in promedios_anuales_hist.items():
+            promedios_texto += f"Año {año}: {promedio:.2f} °C\n"
         for año, promedio in promedios_anuales.items():
             promedios_texto += f"Año {año}: {promedio:.2f} °C\n"
+    
 
-        label_promedios = tk.Label(frame_promedios, text=promedios_texto, font=("Arial", 12), justify="left", anchor="w")
-        label_promedios.pack(anchor="w")
-
-        # Crear un frame para las métricas de error (columna derecha)
-        frame_metricas = tk.Frame(frame_resultados)
-        frame_metricas.pack(side="right", anchor="ne")
+        label_promedios = tk.Label(frame_resultados, text=promedios_texto, font=("Arial", 12), justify="left", anchor="w")
+        label_promedios.grid(row=0, column=0, sticky="w")
 
         # Añadir las métricas de error a la segunda columna (alineadas a la derecha)
         if mae is not None and rmse is not None:
@@ -146,18 +191,11 @@ def proyeccion_temperaturas(ventana, df, año, ciudad, modelo):
         else:
             metricas_texto = "Métricas de Error:\nNo se pueden calcular MAE y RMSE con los datos actuales."
 
-        label_metricas = tk.Label(frame_metricas, text=metricas_texto, font=("Arial", 12), justify="right", anchor="e")
-        label_metricas.pack(anchor="ne")
+        label_metricas = tk.Label(frame_resultados, text=metricas_texto, font=("Arial", 12), justify="right", anchor="e")
+        label_metricas.grid(row=0, column=1, sticky="e", padx=(50, 0))
+
+        # Configuración para expandir las columnas correctamente
+        frame_resultados.grid_columnconfigure(0, weight=1)
+        frame_resultados.grid_columnconfigure(1, weight=1)
 
 
-
-
-def promedios_historicos(ventana, df):
-    promedios = df.groupby(["Ciudad", "Año"])["Temperatura"].mean().reset_index()
-    nueva_ventana = crear_ventana("Promedios de temperatura", ventana)
-    
-    fig, ax = plt.subplots()
-    crear_grafico_barras(promedios, ax)
-    agregar_anotaciones(ax, fig)
-
-    mostrar_canvas(fig, nueva_ventana)

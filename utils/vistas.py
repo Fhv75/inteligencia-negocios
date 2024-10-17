@@ -18,8 +18,6 @@ def menu_principal(ventana):
         boton_cargar.pack(pady=10)
     else:
         print(df)
-        boton_promedios = tk.Button(ventana, text="Mostrar promedios históricos", command=lambda: promedios_historicos(ventana, df))
-        boton_promedios.pack(pady=10)
 
         # Añadir texto que diga "Proyectar Temperaturas"
         texto = tk.Label(ventana, text="Proyectar Temperaturas", font=("Arial", 12))
